@@ -5,6 +5,7 @@
   </component>
   <component name="ChangeListManager">
     <list default="true" id="519b34d3-0ad6-4366-b31c-a374d9e43546" name="Changes" comment="">
+      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/pythonProject1/bitirme.py" beforeDir="false" afterPath="$PROJECT_DIR$/pythonProject1/bitirme.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/pythonProject1/output_video.mp4" beforeDir="false" afterPath="$PROJECT_DIR$/pythonProject1/output_video.mp4" afterDir="false" />
     </list>
@@ -39,7 +40,7 @@
   <component name="PropertiesComponent">{
   &quot;keyToString&quot;: {
     &quot;RunOnceActivity.ShowReadmeOnStart&quot;: &quot;true&quot;,
-    &quot;git-widget-placeholder&quot;: &quot;main&quot;,
+    &quot;git-widget-placeholder&quot;: &quot;KNN__for__ML&quot;,
     &quot;last_opened_file_path&quot;: &quot;C:/bitirme&quot;,
     &quot;node.js.detected.package.eslint&quot;: &quot;true&quot;,
     &quot;node.js.detected.package.tslint&quot;: &quot;true&quot;,
@@ -67,7 +68,10 @@
       <updated>1742507477426</updated>
       <workItem from="1742507478440" duration="991000" />
       <workItem from="1742575341467" duration="5280000" />
-      <workItem from="1742582896659" duration="4313000" />
+      <workItem from="1742582896659" duration="4546000" />
+      <workItem from="1742756843771" duration="143000" />
+      <workItem from="1744052878141" duration="5000" />
+      <workItem from="1744738260961" duration="1918000" />
     </task>
     <servers />
   </component>

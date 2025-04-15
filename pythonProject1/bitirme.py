@@ -13,7 +13,7 @@ model = YOLO("yolov8n.pt").to("cuda" if torch.cuda.is_available() else "cpu")
 model.fuse()
 
 # Open video file or webcam (use 0 for webcam, or provide a video file path)
-video_path = "video_04.mp4"  # Change this to your video file or use 0 for webcam
+video_path = "video_02.mp4"  # Change this to your video file or use 0 for webcam
 cap = cv2.VideoCapture(video_path)
 
 # Get video properties
