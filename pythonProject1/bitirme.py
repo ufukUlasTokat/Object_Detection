@@ -13,7 +13,7 @@ model = YOLO("yolov8n.pt").to("cuda" if torch.cuda.is_available() else "cpu")
 model.fuse()
 
 # Open video file or webcam (use 0 for webcam, or provide a video file path)
-video_path = "video_04.mp4"  # Change this to your video file or use 0 for webcam
+video_path = ("denem.mp4")  # Change this to your video file or use 0 for webcam
 cap = cv2.VideoCapture(video_path)
 
 # Get video properties
@@ -112,10 +112,9 @@ while cap.isOpened():
     # Perform YOLO object detection on the search region
     results = model(search_region, conf=0.4, iou=0.4, max_det=3, verbose=False)
 
-    min_distance = float('inf')
+    best_score = float('inf')
     closest_box = None
 
-    # Filter detections to keep only objects of the selected class
     for box in results[0].boxes:
         class_id = int(box.cls.item())
         if class_id == detected_class_id:
@@ -125,15 +124,46 @@ while cap.isOpened():
             x2_box += x1
             y2_box += y1
             obj_center = np.array([(x1_box + x2_box) // 2, (y1_box + y2_box) // 2])
-            distance_2d = np.linalg.norm(original_center - obj_center)
+            distance = np.linalg.norm(original_center - obj_center)
 
-            if distance_2d < min_distance:
-                min_distance = distance_2d
+            # Color similarity (mean RGB difference)
+            candidate_crop = frame[y1_box:y2_box, x1_box:x2_box]
+            candidate_color = cv2.mean(candidate_crop)[:3] if candidate_crop.size > 0 else (0, 0, 0)
+
+            if 'last_avg_color' in locals():
+                color_diff = np.linalg.norm(np.array(candidate_color) - np.array(last_avg_color))
+            else:
+                color_diff = 0  # first frame fallback
+
+            # Shape similarity (aspect ratio difference)
+            width = x2_box - x1_box
+            height = y2_box - y1_box
+            aspect_ratio = width / height if height > 0 else 1
+
+            if 'last_aspect_ratio' in locals():
+                aspect_diff = abs(aspect_ratio - last_aspect_ratio)
+            else:
+                aspect_diff = 0  # first frame fallback
+
+            # Normalize weights and calculate total score
+            total_score = (
+                    distance / 100 +  # distance in pixels
+                    color_diff / 100 +  # color difference in RGB space
+                    aspect_diff * 2  # amplify aspect ratio difference
+            )
+
+            if total_score < best_score:
+                best_score = total_score
                 closest_box = (x1_box, y1_box, x2_box, y2_box, obj_center)
+                best_color = candidate_color
+                best_aspect_ratio = aspect_ratio
 
     if closest_box:
         x1, y1, x2, y2, obj_center = closest_box
         last_known_size = (x2 - x1, y2 - y1)  # Save current size for fallback
+        last_avg_color = best_color
+        last_aspect_ratio = best_aspect_ratio
+
     else:
         # === Fallback: Use predicted center and last known size ===
         box_w, box_h = last_known_size
