@@ -8,6 +8,7 @@
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/pythonProject1/bitirme.py" beforeDir="false" afterPath="$PROJECT_DIR$/pythonProject1/bitirme.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/pythonProject1/output_video.mp4" beforeDir="false" afterPath="$PROJECT_DIR$/pythonProject1/output_video.mp4" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/pythonProject1/requirements.txt" beforeDir="false" afterPath="$PROJECT_DIR$/pythonProject1/requirements.txt" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -71,7 +72,7 @@
       <workItem from="1742582896659" duration="4546000" />
       <workItem from="1742756843771" duration="143000" />
       <workItem from="1744052878141" duration="5000" />
-      <workItem from="1744738260961" duration="1918000" />
+      <workItem from="1744738260961" duration="2994000" />
     </task>
     <servers />
   </component>

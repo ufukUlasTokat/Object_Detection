@@ -6,3 +6,4 @@ numpy
 opencv-contrib-python
 timm
 scikit-learn
+sklearn

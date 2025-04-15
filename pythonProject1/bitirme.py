@@ -13,7 +13,7 @@ model = YOLO("yolov8n.pt").to("cuda" if torch.cuda.is_available() else "cpu")
 model.fuse()
 
 # Open video file or webcam (use 0 for webcam, or provide a video file path)
-video_path = "video_02.mp4"  # Change this to your video file or use 0 for webcam
+video_path = "video_04.mp4"  # Change this to your video file or use 0 for webcam
 cap = cv2.VideoCapture(video_path)
 
 # Get video properties
@@ -133,69 +133,89 @@ while cap.isOpened():
 
     if closest_box:
         x1, y1, x2, y2, obj_center = closest_box
+        last_known_size = (x2 - x1, y2 - y1)  # Save current size for fallback
+    else:
+        # === Fallback: Use predicted center and last known size ===
+        box_w, box_h = last_known_size
+        x1 = int(predicted_x - box_w / 2)
+        y1 = int(predicted_y - box_h / 2)
+        x2 = int(predicted_x + box_w / 2)
+        y2 = int(predicted_y + box_h / 2)
+        x1 = max(0, x1)
+        y1 = max(0, y1)
+        x2 = min(frame_width, x2)
+        y2 = min(frame_height, y2)
+        obj_center = np.array([(x1 + x2) // 2, (y1 + y2) // 2])
 
-        # Update ML history
-        position_history.append(obj_center)
-        if len(position_history) > N_FRAMES_FOR_MODEL:
-            position_history.pop(0)
+    # Update ML history
+    position_history.append(obj_center)
+    if len(position_history) > N_FRAMES_FOR_MODEL:
+        position_history.pop(0)
 
-            if len(position_history) > 5:
-                # Create past and next positions
-                past_positions = np.array(position_history[:-1])
-                next_positions = np.array(position_history[1:])
+        if len(position_history) > 5:
+            # Create past and next positions
+            past_positions = np.array(position_history[:-1])
+            next_positions = np.array(position_history[1:])
 
-                # Compute velocities and accelerations
-                velocities = np.diff(position_history, axis=0)
-                accels = np.diff(velocities, axis=0)
+            velocities = np.diff(position_history, axis=0)
+            accels = np.diff(velocities, axis=0)
 
-                # Pad to match past_positions length
-                velocities = np.vstack((velocities, [0, 0]))[:len(past_positions)]
-                accels = np.vstack((accels, [0, 0], [0, 0]))[:len(past_positions)]
+            velocities = np.vstack((velocities, [0, 0]))[:len(past_positions)]
+            accels = np.vstack((accels, [0, 0], [0, 0]))[:len(past_positions)]
 
-                # Compute average color in bounding box
-                x1c, y1c, x2c, y2c = x1, y1, x2, y2
-                cropped = frame[y1c:y2c, x1c:x2c]
-                avg_color = cv2.mean(cropped)[:3] if cropped.size > 0 else (0, 0, 0)
+            cropped = frame[y1:y2, x1:x2]
+            avg_color = cv2.mean(cropped)[:3] if cropped.size > 0 else (0, 0, 0)
 
-                # Build features
-                features = []
-                for i in range(len(past_positions)):
-                    f = list(past_positions[i]) + list(velocities[i]) + list(accels[i]) + list(avg_color)
-                    features.append(f)
-                features = np.array(features)
-                targets_x = next_positions[:, 0]
-                targets_y = next_positions[:, 1]
+            def get_pca_direction(crop):
+                gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
+                coords = np.column_stack(np.where(gray > 30))
+                if len(coords) < 2:
+                    return 90.0
+                from sklearn.decomposition import PCA
+                pca = PCA(n_components=2)
+                pca.fit(coords)
+                vec = pca.components_[0]
+                angle_rad = np.arctan2(vec[0], vec[1])
+                return (np.degrees(angle_rad) + 360) % 360
 
-                # Feature for prediction
-                v_now = velocities[-1]
-                a_now = accels[-1]
-                current_feature = np.array(list(obj_center) + list(v_now) + list(a_now) + list(avg_color)).reshape(1, -1)
+            pca_angle = get_pca_direction(cropped)
 
-                # Train KNN model
-                model_x = KNeighborsRegressor(n_neighbors=3)
-                model_y = KNeighborsRegressor(n_neighbors=3)
-                model_x.fit(features, targets_x)
-                model_y.fit(features, targets_y)
+            # Build features
+            features = []
+            for i in range(len(past_positions)):
+                f = list(past_positions[i]) + list(velocities[i]) + list(accels[i]) + list(avg_color) + [pca_angle]
+                features.append(f)
+            features = np.array(features)
+            targets_x = next_positions[:, 0]
+            targets_y = next_positions[:, 1]
 
-                predicted_x_ml = model_x.predict(current_feature)[0]
-                predicted_y_ml = model_y.predict(current_feature)[0]
+            # Prediction
+            v_now = velocities[-1]
+            a_now = accels[-1]
+            current_feature = np.array(list(obj_center) + list(v_now) + list(a_now) + list(avg_color) + [pca_angle]).reshape(1, -1)
 
-                kalman.correct(np.array([predicted_x_ml, predicted_y_ml], np.float32).reshape(2, 1))
+            model_x = KNeighborsRegressor(n_neighbors=3)
+            model_y = KNeighborsRegressor(n_neighbors=3)
+            model_x.fit(features, targets_x)
+            model_y.fit(features, targets_y)
 
-        else:
-            # During first N_FRAMES_FOR_MODEL frames, use detection center to correct Kalman
-            kalman.correct(np.array(obj_center, np.float32).reshape(2, 1))
+            predicted_x_ml = model_x.predict(current_feature)[0]
+            predicted_y_ml = model_y.predict(current_feature)[0]
 
-        # Update original center for next tracking step
-        original_center = obj_center
+            kalman.correct(np.array([predicted_x_ml, predicted_y_ml], np.float32).reshape(2, 1))
+    else:
+        kalman.correct(np.array(obj_center, np.float32).reshape(2, 1))
 
-        # For first N_FRAMES_FOR_MODEL frames, override Kalman prediction with detection center
-        if frame_count <= N_FRAMES_FOR_MODEL:
-            predicted_x, predicted_y = obj_center[0], obj_center[1]
+    original_center = obj_center
 
-        # Draw bounding box and class label
+    if frame_count <= N_FRAMES_FOR_MODEL:
+        predicted_x, predicted_y = obj_center[0], obj_center[1]
+
+    # Draw only if detection exists
+    if closest_box:
         cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
         cv2.putText(frame, detected_class_name, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+
 
     # Draw Kalman prediction (red dot) even if there's no detection
     cv2.circle(frame, (predicted_x, predicted_y), 5, (0, 0, 255), -1)
