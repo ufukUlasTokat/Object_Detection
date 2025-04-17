@@ -12,14 +12,21 @@ import time
 model = YOLO("yolov8n.pt").to("cuda" if torch.cuda.is_available() else "cpu")
 model.fuse()
 
-# Open video file or webcam (use 0 for webcam, or provide a video file path)
-video_path = ("denem.mp4")  # Change this to your video file or use 0 for webcam
+# Open video file or webcam
+video_path = ("deneme2.mp4")  # Change this to your video file or use 0 for webcam
 cap = cv2.VideoCapture(video_path)
 
 # Get video properties
 frame_width = int(cap.get(3))
 frame_height = int(cap.get(4))
 fps = int(cap.get(cv2.CAP_PROP_FPS))
+
+# --- New visualization parameters ---
+frame_center = np.array([frame_width / 2, frame_height / 2])
+max_dist = np.linalg.norm(frame_center)
+frame_area = frame_width * frame_height
+arrow_length = 50  # length of re-centering arrow in pixels
+# ------------------------------------
 
 # Define video writer for saving output
 output_path = "output_video.mp4"
@@ -33,229 +40,159 @@ if not ret:
     cap.release()
     exit()
 
-# Allow user to select ROI (Region of Interest) on the first frame
+# Allow user to select ROI on the first frame
 print("Select the object by drawing a bounding box and press ENTER or SPACE.")
 roi = cv2.selectROI("Select Target", first_frame, fromCenter=False, showCrosshair=True)
 cv2.destroyWindow("Select Target")
 
 # Extract ROI coordinates
 x, y, w, h = roi
-original_center = np.array([x + w // 2, y + h // 2])  # Store (x, y)
-search_box_size = max(w, h) * 1.3  # Reduce search region to 1.5x instead of 2x
+original_center = np.array([x + w // 2, y + h // 2])
+search_box_size = max(w, h) * 1.3
 
-# Apply YOLO on the selected region to identify the object
+# Initial detection in ROI
 results = model(first_frame[y:y + h, x:x + w])
-
-# Check detected objects in the selected area
 if len(results[0].boxes) == 0:
     print("No object detected in the selected region.")
     cap.release()
     exit()
 
-# Get the detected class in the selected region
-detected_class_id = int(results[0].boxes.cls[0].item())  # Class ID
-detected_class_name = model.names[detected_class_id]  # Class Name
+detected_class_id = int(results[0].boxes.cls[0].item())
+detected_class_name = model.names[detected_class_id]
 print(f"Selected object class: {detected_class_name} (ID: {detected_class_id})")
 
 # Store past positions for ML model
 position_history = []
-N_FRAMES_FOR_MODEL = 30  # Number of frames to train the ML model
+N_FRAMES_FOR_MODEL = 30
 
 # Initialize Kalman Filter
 kalman = cv2.KalmanFilter(4, 2)
-kalman.measurementMatrix = np.array([[1, 0, 0, 0],
-                                     [0, 1, 0, 0]], np.float32)
-kalman.transitionMatrix = np.array([[1, 0, 1, 0],
-                                    [0, 1, 0, 1],
-                                    [0, 0, 1, 0],
-                                    [0, 0, 0, 1]], np.float32)
+kalman.measurementMatrix = np.array([[1, 0, 0, 0], [0, 1, 0, 0]], np.float32)
+kalman.transitionMatrix = np.array([[1, 0, 1, 0], [0, 1, 0, 1], [0, 0, 1, 0], [0, 0, 0, 1]], np.float32)
 kalman.processNoiseCov = np.eye(4, dtype=np.float32) * 0.03
-kalman.measurementNoiseCov = np.eye(2, dtype=np.float32) * 0.01  # 👈 YOLO is reliable
-kalman.statePost = np.array([original_center[0], original_center[1], 0, 0],
-                            dtype=np.float32).reshape(4, 1)
+kalman.measurementNoiseCov = np.eye(2, dtype=np.float32) * 0.01
+kalman.statePost = np.array([original_center[0], original_center[1], 0, 0], dtype=np.float32).reshape(4, 1)
 
-
-# Initialize frame counter
+# Initialize frame counter and helpers
 frame_count = 0
+last_known_size = (w, h)
+best_conf = 0.0
 
 while cap.isOpened():
     ret, frame = cap.read()
     if not ret:
-        break  # Stop if the video ends
+        break
 
     frame_count += 1
-
-    # Kalman Filter prediction (always used to predict red dot position)
+    # Kalman prediction
     predicted_state = kalman.predict()
     predicted_x, predicted_y = int(predicted_state[0, 0]), int(predicted_state[1, 0])
 
-    # Skip detection on every 5th frame (e.g., 4th, 8th, 12th...)
+    # Skip detection on every 6th frame
     if frame_count % 6 == 0:
-        # Just draw the red dot (predicted position)
+        # Draw red dot prediction
         cv2.circle(frame, (predicted_x, predicted_y), 5, (0, 0, 255), -1)
+        # --- Visualization overlays ---
+        # Centering
+        dist = np.linalg.norm(original_center - frame_center)
+        closeness = 1.0 - (dist / max_dist)
+        cv2.putText(frame, f"Centering: {closeness*100:.1f}%", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255,255,255), 2)
+        # Confidence
+        cv2.putText(frame, f"Conf: {best_conf*100:.1f}%", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255,255,255), 2)
+        # Dummy visibility
+        vis_metric = (last_known_size[0] * last_known_size[1]) / frame_area
+        cv2.putText(frame, f"Box/Frame: {vis_metric*100:.1f}%", (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255,255,255), 2)
+        # Re-centering arrow (camera should move opposite direction)
+        if closeness < 0.9:
+            offset = original_center - frame_center  # inverse of object movement
+            norm = np.linalg.norm(offset)
+            if norm > 1e-6:
+                direction = offset / norm
+                end_pt = original_center + direction * arrow_length
+                cv2.arrowedLine(frame, tuple(original_center.astype(int)), tuple(end_pt.astype(int)), (0,255,255), 2, tipLength=0.3)
+        # ------------------------------
         cv2.imshow("YOLOv8 Object Tracking + Kalman Filter", frame)
         out.write(frame)
         if cv2.waitKey(1) & 0xFF == ord('q'):
             break
-        continue  # Skip detection for this frame
+        continue
 
-    # Define search area centered on previous detection
+    # Define search window
     x_center, y_center = original_center
-    x1 = max(0, int(x_center - search_box_size // 2))
-    y1 = max(0, int(y_center - search_box_size // 2))
-    x2 = min(frame_width, int(x_center + search_box_size // 2))
-    y2 = min(frame_height, int(y_center + search_box_size // 2))
-
-    # Crop and resize search region for faster YOLO inference
+    x1 = max(0, int(x_center - search_box_size//2))
+    y1 = max(0, int(y_center - search_box_size//2))
+    x2 = min(frame_width, int(x_center + search_box_size//2))
+    y2 = min(frame_height, int(y_center + search_box_size//2))
     search_region = frame[y1:y2, x1:x2]
 
-    # Perform YOLO object detection on the search region
+    # YOLO detection
     results = model(search_region, conf=0.4, iou=0.4, max_det=3, verbose=False)
-
     best_score = float('inf')
     closest_box = None
-
+    best_conf = 0.0
     for box in results[0].boxes:
         class_id = int(box.cls.item())
-        if class_id == detected_class_id:
-            x1_box, y1_box, x2_box, y2_box = map(int, box.xyxy[0])
-            x1_box += x1
-            y1_box += y1
-            x2_box += x1
-            y2_box += y1
-            obj_center = np.array([(x1_box + x2_box) // 2, (y1_box + y2_box) // 2])
-            distance = np.linalg.norm(original_center - obj_center)
-
-            # Color similarity (mean RGB difference)
-            candidate_crop = frame[y1_box:y2_box, x1_box:x2_box]
-            candidate_color = cv2.mean(candidate_crop)[:3] if candidate_crop.size > 0 else (0, 0, 0)
-
-            if 'last_avg_color' in locals():
-                color_diff = np.linalg.norm(np.array(candidate_color) - np.array(last_avg_color))
-            else:
-                color_diff = 0  # first frame fallback
-
-            # Shape similarity (aspect ratio difference)
-            width = x2_box - x1_box
-            height = y2_box - y1_box
-            aspect_ratio = width / height if height > 0 else 1
-
-            if 'last_aspect_ratio' in locals():
-                aspect_diff = abs(aspect_ratio - last_aspect_ratio)
-            else:
-                aspect_diff = 0  # first frame fallback
-
-            # Normalize weights and calculate total score
-            total_score = (
-                    distance / 100 +  # distance in pixels
-                    color_diff / 100 +  # color difference in RGB space
-                    aspect_diff * 2  # amplify aspect ratio difference
-            )
-
-            if total_score < best_score:
-                best_score = total_score
-                closest_box = (x1_box, y1_box, x2_box, y2_box, obj_center)
-                best_color = candidate_color
-                best_aspect_ratio = aspect_ratio
-
+        if class_id != detected_class_id: continue
+        bx1, by1, bx2, by2 = map(int, box.xyxy[0])
+        bx1 += x1; by1 += y1; bx2 += x1; by2 += y1
+        obj_center = np.array([(bx1+bx2)//2, (by1+by2)//2])
+        distance = np.linalg.norm(original_center - obj_center)
+        # Color
+        crop = frame[by1:by2, bx1:bx2]
+        color = cv2.mean(crop)[:3] if crop.size else (0,0,0)
+        color_diff = np.linalg.norm(np.array(color)-np.array(last_avg_color)) if 'last_avg_color' in locals() else 0
+        # Aspect
+        width, height = bx2-bx1, by2-by1
+        ar = width/height if height>0 else 1
+        ar_diff = abs(ar-last_aspect_ratio) if 'last_aspect_ratio' in locals() else 0
+        score = distance/100 + color_diff/100 + ar_diff*2
+        if score < best_score:
+            best_score = score
+            closest_box = (bx1,by1,bx2,by2,obj_center)
+            last_avg_color = color
+            last_aspect_ratio = ar
+            best_conf = float(box.conf.item())
+    # Fallback
     if closest_box:
-        x1, y1, x2, y2, obj_center = closest_box
-        last_known_size = (x2 - x1, y2 - y1)  # Save current size for fallback
-        last_avg_color = best_color
-        last_aspect_ratio = best_aspect_ratio
-
+        x1,y1,x2,y2,obj_center = closest_box
+        last_known_size = (x2-x1, y2-y1)
     else:
-        # === Fallback: Use predicted center and last known size ===
-        box_w, box_h = last_known_size
-        x1 = int(predicted_x - box_w / 2)
-        y1 = int(predicted_y - box_h / 2)
-        x2 = int(predicted_x + box_w / 2)
-        y2 = int(predicted_y + box_h / 2)
-        x1 = max(0, x1)
-        y1 = max(0, y1)
-        x2 = min(frame_width, x2)
-        y2 = min(frame_height, y2)
-        obj_center = np.array([(x1 + x2) // 2, (y1 + y2) // 2])
-
-    # Update ML history
-    position_history.append(obj_center)
-    if len(position_history) > N_FRAMES_FOR_MODEL:
-        position_history.pop(0)
-
-        if len(position_history) > 5:
-            # Create past and next positions
-            past_positions = np.array(position_history[:-1])
-            next_positions = np.array(position_history[1:])
-
-            velocities = np.diff(position_history, axis=0)
-            accels = np.diff(velocities, axis=0)
-
-            velocities = np.vstack((velocities, [0, 0]))[:len(past_positions)]
-            accels = np.vstack((accels, [0, 0], [0, 0]))[:len(past_positions)]
-
-            cropped = frame[y1:y2, x1:x2]
-            avg_color = cv2.mean(cropped)[:3] if cropped.size > 0 else (0, 0, 0)
-
-            def get_pca_direction(crop):
-                gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
-                coords = np.column_stack(np.where(gray > 30))
-                if len(coords) < 2:
-                    return 90.0
-                from sklearn.decomposition import PCA
-                pca = PCA(n_components=2)
-                pca.fit(coords)
-                vec = pca.components_[0]
-                angle_rad = np.arctan2(vec[0], vec[1])
-                return (np.degrees(angle_rad) + 360) % 360
-
-            pca_angle = get_pca_direction(cropped)
-
-            # Build features
-            features = []
-            for i in range(len(past_positions)):
-                f = list(past_positions[i]) + list(velocities[i]) + list(accels[i]) + list(avg_color) + [pca_angle]
-                features.append(f)
-            features = np.array(features)
-            targets_x = next_positions[:, 0]
-            targets_y = next_positions[:, 1]
-
-            # Prediction
-            v_now = velocities[-1]
-            a_now = accels[-1]
-            current_feature = np.array(list(obj_center) + list(v_now) + list(a_now) + list(avg_color) + [pca_angle]).reshape(1, -1)
-
-            model_x = KNeighborsRegressor(n_neighbors=3)
-            model_y = KNeighborsRegressor(n_neighbors=3)
-            model_x.fit(features, targets_x)
-            model_y.fit(features, targets_y)
-
-            predicted_x_ml = model_x.predict(current_feature)[0]
-            predicted_y_ml = model_y.predict(current_feature)[0]
-
-            kalman.correct(np.array([predicted_x_ml, predicted_y_ml], np.float32).reshape(2, 1))
-    else:
-        kalman.correct(np.array(obj_center, np.float32).reshape(2, 1))
-
+        bw,bh = last_known_size
+        x1 = int(predicted_x-bw/2); y1 = int(predicted_y-bh/2)
+        x2 = x1+bw; y2 = y1+bh
+        x1,y1 = max(0,x1), max(0,y1)
+        x2,y2 = min(frame_width,x2), min(frame_height,y2)
+        obj_center = np.array([(x1+x2)//2,(y1+y2)//2])
+    kalman.correct(obj_center.reshape(2,1).astype(np.float32))
     original_center = obj_center
 
-    if frame_count <= N_FRAMES_FOR_MODEL:
-        predicted_x, predicted_y = obj_center[0], obj_center[1]
+    # Draw box & class
+    cv2.rectangle(frame,(x1,y1),(x2,y2),(0,255,0),2)
+    cv2.putText(frame,detected_class_name,(x1,y1-10),cv2.FONT_HERSHEY_SIMPLEX,0.5,(0,255,0),2)
+    # Prediction dot
+    cv2.circle(frame,(predicted_x,predicted_y),5,(0,0,255),-1)
 
-    # Draw only if detection exists
-    if closest_box:
-        cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
-        cv2.putText(frame, detected_class_name, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
-
-
-    # Draw Kalman prediction (red dot) even if there's no detection
-    cv2.circle(frame, (predicted_x, predicted_y), 5, (0, 0, 255), -1)
+    # --- Visualization overlays ---
+    dist = np.linalg.norm(obj_center - frame_center)
+    closeness = 1.0 - (dist / max_dist)
+    cv2.putText(frame, f"Centering: {closeness*100:.1f}%", (10,30), cv2.FONT_HERSHEY_SIMPLEX,0.7,(255,255,255),2)
+    cv2.putText(frame, f"Conf: {best_conf*100:.1f}%", (10,60), cv2.FONT_HERSHEY_SIMPLEX,0.7,(255,255,255),2)
+    vis_metric = ((x2-x1)*(y2-y1)) / frame_area
+    cv2.putText(frame, f"Vis: {vis_metric*100:.1f}%", (10,90),cv2.FONT_HERSHEY_SIMPLEX,0.7,(255,255,255),2)
+    # Re-centering arrow (camera should move opposite direction)
+    if closeness < 0.9:
+        offset = obj_center - frame_center  # inverse of object movement
+        norm = np.linalg.norm(offset)
+        if norm > 1e-6:
+            direction = offset / norm
+            end_pt = obj_center + direction * arrow_length
+            cv2.arrowedLine(frame, tuple(obj_center.astype(int)), tuple(end_pt.astype(int)), (0,255,255),2,tipLength=0.3)
+    # ------------------------------
 
     cv2.imshow("YOLOv8 Object Tracking + Kalman Filter", frame)
     out.write(frame)
-
     if cv2.waitKey(1) & 0xFF == ord('q'):
         break
-
 
 cap.release()
 out.release()
