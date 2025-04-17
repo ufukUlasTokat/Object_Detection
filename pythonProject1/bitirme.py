@@ -6,7 +6,7 @@ from ultralytics import YOLO
 model = YOLO("yolov8n.pt").to("cuda" if torch.cuda.is_available() else "cpu")
 model.fuse()
 
-video_path = "deneme2.mp4" 
+video_path = "deneme3.mp4" 
 cap = cv2.VideoCapture(video_path)
 
 # video properties
