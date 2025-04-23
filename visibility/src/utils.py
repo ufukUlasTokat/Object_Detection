@@ -47,7 +47,7 @@ def get_combined_visibility(closeness, conf, vis, flow_coh, kp_ratio, path_cons,
         'conf': 0.5,
         'vis': 0.05,
         'flow': 0.2,
-        'kp': 0.45,
+        'kp': 0.5,
         'path': 0.05,
     }
     w = default_weights if weights is None else weights

@@ -13,6 +13,7 @@ from utils import (
 import cv2
 import numpy as np
 import os
+import time
 
 
 def select_target_roi(frame):
@@ -28,7 +29,7 @@ def main():
     # Directory to save frames with sudden drops
     drop_folder = "../output/drops"
     os.makedirs(drop_folder, exist_ok=True)
-    drop_threshold = 0.2
+    drop_threshold = 0.1
 
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
@@ -86,10 +87,16 @@ def main():
     prev_flow_coh = 1.0
     prev_kp_ratio = 1.0
 
+    # Timing stats
+    total_time = 0.0
+    proc_count = 0
+
     while True:
         ret, frame = cap.read()
         if not ret:
             break
+
+        start = time.time()
 
         frame_count += 1
         # Kalman predict
@@ -188,8 +195,18 @@ def main():
         if cv2.waitKey(1) & 0xFF == ord('q'):
             break
 
-    # Print template update count
+        # Update timing
+        elapsed = time.time() - start
+        total_time += elapsed
+        proc_count += 1
+
+    # Print timing stats and template updates
+    avg_time = total_time / proc_count if proc_count else 0
+    est_fps = 1.0 / avg_time if avg_time else 0
+    print(f"Processed {proc_count} frames in {total_time:.2f} s")
+    print(f"Average time/frame: {avg_time*1000:.1f} ms | Estimated FPS: {est_fps:.1f}")
     print(f"Template was updated {template_update_count} times during tracking.")
+
     cap.release()
     cv2.destroyAllWindows()
 
