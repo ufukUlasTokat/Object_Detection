@@ -13,6 +13,11 @@ def get_visibility_score(size, frame_area):
 def get_optical_flow_coherence(prev_crop, curr_crop):
     prev_gray = cv2.cvtColor(prev_crop, cv2.COLOR_BGR2GRAY)
     curr_gray = cv2.cvtColor(curr_crop, cv2.COLOR_BGR2GRAY)
+
+    # apply gaussian blur to reduce noise
+    prev_gray = cv2.GaussianBlur(prev_gray, (5, 5), sigmaX=1.0)
+    curr_gray = cv2.GaussianBlur(curr_gray, (5, 5), sigmaX=1.0)
+
     flow = cv2.calcOpticalFlowFarneback(prev_gray, curr_gray, None,
                                         pyr_scale=0.5, levels=1, winsize=15,
                                         iterations=2, poly_n=5, poly_sigma=1.2, flags=0)
@@ -36,6 +41,8 @@ def get_keypoint_match_ratio(prev_crop, curr_crop):
 
 
 def get_path_consistency(predicted_center, measured_center, max_dist):
+    if predicted_center is None or measured_center is None:
+        return None
     dist = np.linalg.norm(predicted_center - measured_center)
     consistency = 1.0 - (dist / max_dist)
     return float(np.clip(consistency, 0.0, 1.0))

@@ -1,0 +1,5 @@
+train: D:\Repos\Object_Detection\visibility\data\yolo_labels\train\images
+val: D:\Repos\Object_Detection\visibility\data\yolo_labels\train\images
+
+nc: 1
+names: ['target']
