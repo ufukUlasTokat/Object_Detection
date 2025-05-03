@@ -24,12 +24,12 @@ def select_target_roi(frame):
 
 
 def main():
-    video_path = "../data/deneme3.mp4"
+    video_path = "../data/VisDrone2019-SOT-val/sequences/uav0000024_00000_s"
 
     # Directory to save frames with sudden drops
     drop_folder = "../output/drops"
     os.makedirs(drop_folder, exist_ok=True)
-    drop_threshold = 0.1
+    drop_threshold = 0.9
 
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
@@ -69,7 +69,7 @@ def main():
     x1_i, y1_i, x2_i, y2_i = initial_box
     prev_crop_flow = first_frame[y1_i:y2_i, x1_i:x2_i].copy()
     template_crop_kp = prev_crop_flow.copy()
-    template_update_conf = 0.8
+    template_update_conf = 0
     template_update_count = 0
 
     frame_center = np.array([frame_width / 2, frame_height / 2])
@@ -82,7 +82,7 @@ def main():
     expansion_factor = 1.2
     initial_search_box_size = search_box_size
     frame_count = 0
-
+    
     # Last values for smoothing
     prev_flow_coh = 1.0
     prev_kp_ratio = 1.0
@@ -90,6 +90,11 @@ def main():
     # Timing stats
     total_time = 0.0
     proc_count = 0
+
+    # Stats for dynamic cues
+    sum_flow = 0.0
+    sum_kp = 0.0
+    sum_path = 0.0
 
     while True:
         ret, frame = cap.read()
@@ -185,6 +190,11 @@ def main():
         pred_pt = np.array([px, py])
         path_cons = get_path_consistency(pred_pt, initial_center, max_dist)
 
+        # Update averages for metrics
+        sum_flow += flow_coh
+        sum_kp += kp_ratio
+        sum_path += path_cons
+
         # Overlay diagnostics & display
         draw_diagnostics(
             frame, closeness, best_conf, vis_metric, occluded,
@@ -206,6 +216,14 @@ def main():
     print(f"Processed {proc_count} frames in {total_time:.2f} s")
     print(f"Average time/frame: {avg_time*1000:.1f} ms | Estimated FPS: {est_fps:.1f}")
     print(f"Template was updated {template_update_count} times during tracking.")
+
+    # Print individual averages for dynamic metrics
+    avg_flow = sum_flow / proc_count if proc_count else 0
+    avg_kp = sum_kp / proc_count if proc_count else 0
+    avg_path = sum_path / proc_count if proc_count else 0
+    print(f"Average Flow Coherence: {avg_flow*100:.1f}%")
+    print(f"Average Keypoint Ratio: {avg_kp*100:.1f}%")
+    print(f"Average Path Consistency: {avg_path*100:.1f}%")
 
     cap.release()
     cv2.destroyAllWindows()
