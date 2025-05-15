@@ -67,7 +67,8 @@ def main():
         return
 
     print(f"Selected object: {detected_class_name}")
-    tracker = KalmanTracker(initial_center)
+    tracker = KalmanTracker(initial_center, use_ml=True, window_size=5)
+
 
     # Set up fixed-size bounding box from first detection
     x1_i, y1_i, x2_i, y2_i = initial_box
@@ -133,7 +134,8 @@ def main():
         prev_gray_bg = gray_bg
 
         # ----- Kalman predict and build fixed bbox -----
-        state = tracker.predict()
+        skip_yolo = (frame_count % 6 != 0)
+        state = tracker.predict(skip_yolo=skip_yolo)
         px, py = int(state[0]), int(state[1])
         bw, bh = last_known_size
         bx1 = max(0, px - bw // 2); by1 = max(0, py - bh // 2)
@@ -167,7 +169,7 @@ def main():
                     template_update_count += 1
             else:
                 occluded = True; occlusion_counter += 1; obj_center = np.array([px, py])
-            tracker.correct(obj_center)
+            tracker.correct(obj_center, used_yolo=not occluded)
         initial_center = obj_center.copy()
 
         # ----- Object Farneback flow on fixed bbox -----
