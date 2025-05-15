@@ -7,13 +7,17 @@ from utils import (
     draw_recenter_arrow,
     get_optical_flow_coherence,
     get_keypoint_match_ratio,
-    get_path_consistency
+    get_path_consistency,
+    display_centering_feedback,
+    display_flow_feedback,
+    display_combined_feedback
 )
 
 import cv2
 import numpy as np
 import os
 import time
+from collections import deque
 
 
 def select_target_roi(frame):
@@ -24,7 +28,7 @@ def select_target_roi(frame):
 
 
 def main():
-    video_path = "../data/deneme3.mp4"
+    video_path = "../data/deneme2.mp4"
     drop_folder = "../output/drops"
     os.makedirs(drop_folder, exist_ok=True)
     drop_threshold = 0.9
@@ -38,20 +42,26 @@ def main():
     frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     fps = int(cap.get(cv2.CAP_PROP_FPS))
 
+    # downsampling parameters for ego-motion compensation
+    small_w = 320
+    small_h = int(frame_height * small_w / frame_width)
+    prev_gray_bg = None
+    bg_flow_buffer = deque(maxlen=5)
+
     ret, first_frame = cap.read()
     if not ret:
         print("Error: Could not read first frame.")
         return
 
+    # Initial ROI selection and YOLO detection
     roi = select_target_roi(first_frame)
     x, y, w, h = roi
     initial_center = np.array([x + w // 2, y + h // 2])
     search_box_size = max(w, h) * 1.3
 
     detector = YOLODetector("../data/yolov8n.pt")
-    detected_class_id, detected_class_name, initial_box, best_conf = (
+    detected_class_id, detected_class_name, initial_box, best_conf = \
         detector.initial_detect(first_frame, roi, fps)
-    )
     if detected_class_id is None:
         print("Error: Object not detected.")
         return
@@ -59,12 +69,15 @@ def main():
     print(f"Selected object: {detected_class_name}")
     tracker = KalmanTracker(initial_center)
 
+    # Set up fixed-size bounding box from first detection
     x1_i, y1_i, x2_i, y2_i = initial_box
-    prev_crop_flow = first_frame[y1_i:y2_i, x1_i:x2_i].copy()
-    template_crop_kp = prev_crop_flow.copy()
-    template_update_conf = 0
+    last_known_size = (x2_i - x1_i, y2_i - y1_i)
+    prev_fixed_crop = first_frame[y1_i:y2_i, x1_i:x2_i].copy()
+    template_crop_kp = prev_fixed_crop.copy()
+    template_update_conf = 1
     template_update_count = 0
 
+    # Diagnostics and state variables
     frame_center = np.array([frame_width / 2, frame_height / 2])
     frame_area = frame_width * frame_height
     arrow_length = 50
@@ -76,16 +89,26 @@ def main():
     initial_search_box_size = search_box_size
     frame_count = 0
 
-    prev_flow_coh = 1.0
-    prev_kp_ratio = 1.0
-
     total_time = 0.0
     proc_count = 0
-
     sum_flow = 0.0
     sum_kp = 0.0
     sum_path = 0.0
     valid_path_count = 0
+
+    # Variables to store ROI coords for drawing
+    rx1 = ry1 = rx2 = ry2 = 0
+
+    # Prepare for dense Farneback optical flow on object
+    prev_gray_obj = None
+    obj_flow_buffer = deque(maxlen=5)
+
+    # Exponential smoothing for compensated flow
+    comp_dx_ema, comp_dy_ema = 0.0, 0.0
+    ema_alpha = 0.1  # smoothing factor
+    max_arrow_length = min(frame_width, frame_height) * 0.5
+    flow_scale = 20  # scale factor before clamping
+    max_occlusion_for_flow = 2  # skip flow if deeply occluded
 
     while True:
         ret, frame = cap.read()
@@ -94,115 +117,156 @@ def main():
 
         start = time.time()
         frame_count += 1
+
+        # ----- Ego-motion flow on downsampled full frame -----
+        small_frame = cv2.resize(frame, (small_w, small_h))
+        gray_bg = cv2.cvtColor(small_frame, cv2.COLOR_BGR2GRAY)
+        if prev_gray_bg is not None:
+            flow_bg = cv2.calcOpticalFlowFarneback(
+                prev_gray_bg, gray_bg, None,
+                pyr_scale=0.5, levels=3, winsize=15,
+                iterations=3, poly_n=5, poly_sigma=1.2, flags=0
+            )
+            dx_bg = flow_bg[...,0].mean() * (frame_width / small_w)
+            dy_bg = flow_bg[...,1].mean() * (frame_height / small_h)
+            bg_flow_buffer.append((dx_bg, dy_bg))
+        prev_gray_bg = gray_bg
+
+        # ----- Kalman predict and build fixed bbox -----
         state = tracker.predict()
         px, py = int(state[0]), int(state[1])
+        bw, bh = last_known_size
+        bx1 = max(0, px - bw // 2); by1 = max(0, py - bh // 2)
+        bx2 = min(frame_width, bx1 + bw); by2 = min(frame_height, by1 + bh)
+        fixed_bbox = (bx1, by1, bx2, by2)
 
+        # ----- Detection ROI logic (unchanged) -----
         if frame_count % 6 == 0:
             obj_center = initial_center.copy()
             occluded = False
-            x1 = int(px - last_known_size[0] / 2)
-            y1 = int(py - last_known_size[1] / 2)
-            x2 = x1 + last_known_size[0]
-            y2 = y1 + last_known_size[1]
         else:
             if occlusion_counter > expansion_delay_frames:
                 search_box_size = min(max_search_box_size, search_box_size * expansion_factor)
             else:
                 search_box_size = initial_search_box_size
 
-            cx, cy = initial_center
-            half = search_box_size / 2
-            x1 = int(max(0, cx - half))
-            y1 = int(max(0, cy - half))
-            x2 = int(min(frame_width, cx + half))
-            y2 = int(min(frame_height, cy + half))
-            crop = frame[y1:y2, x1:x2]
+            cx, cy = initial_center; half = search_box_size / 2
+            rx1 = int(max(0, cx - half)); ry1 = int(max(0, cy - half))
+            rx2 = int(min(frame_width, cx + half)); ry2 = int(min(frame_height, cy + half))
+            detection_crop = frame[ry1:ry2, rx1:rx2]
+
             found, closest_box, new_conf = detector.detect_in_roi(
-                crop, x1, y1, detected_class_id, initial_center
+                detection_crop, rx1, ry1, detected_class_id, initial_center
             )
             if found:
-                bx1, by1, bx2, by2, obj_center = closest_box
-                last_known_size = (bx2 - bx1, by2 - by1)
-                best_conf = new_conf
-                occluded = False
-                occlusion_counter = 0
+                bx1_det, by1_det, bx2_det, by2_det, obj_center = closest_box
+                last_known_size = (bx2_det - bx1_det, by2_det - by1_det)
+                best_conf = new_conf; occluded = False; occlusion_counter = 0
                 if best_conf >= template_update_conf:
-                    template_crop_kp = crop.copy()
+                    template_crop_kp = frame[by1:by2, bx1:bx2].copy()
                     template_update_count += 1
             else:
-                occluded = True
-                occlusion_counter += 1
-                obj_center = np.array([px, py])
-                x1 = int(px - last_known_size[0] / 2)
-                y1 = int(py - last_known_size[1] / 2)
-                x2 = x1 + last_known_size[0]
-                y2 = y1 + last_known_size[1]
+                occluded = True; occlusion_counter += 1; obj_center = np.array([px, py])
             tracker.correct(obj_center)
-
         initial_center = obj_center.copy()
-        crop = frame[y1:y2, x1:x2]
 
-        cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+        # ----- Object Farneback flow on fixed bbox -----
+        fx1, fy1, fx2, fy2 = fixed_bbox
+        fixed_crop = frame[fy1:fy2, fx1:fx2]
+        gray_obj = cv2.cvtColor(fixed_crop, cv2.COLOR_BGR2GRAY)
+        if prev_gray_obj is not None and prev_gray_obj.shape == gray_obj.shape and occlusion_counter <= max_occlusion_for_flow:
+            flow_obj = cv2.calcOpticalFlowFarneback(
+                prev_gray_obj, gray_obj, None,
+                pyr_scale=0.5, levels=3, winsize=15,
+                iterations=3, poly_n=5, poly_sigma=1.2, flags=0
+            )
+            dx_obj = flow_obj[...,0].mean()
+            dy_obj = flow_obj[...,1].mean()
+            obj_flow_buffer.append((dx_obj, dy_obj))
+        prev_gray_obj = gray_obj
+
+        # ----- Compute compensated flow -----
+        if obj_flow_buffer and bg_flow_buffer:
+            avg_dx_obj, avg_dy_obj = np.mean(np.array(obj_flow_buffer), axis=0)
+            avg_dx_bg, avg_dy_bg = np.mean(np.array(bg_flow_buffer), axis=0)
+            comp_dx = avg_dx_obj - avg_dx_bg
+            comp_dy = avg_dy_obj - avg_dy_bg
+            # exponential moving average
+            comp_dx_ema = ema_alpha * comp_dx + (1 - ema_alpha) * comp_dx_ema
+            comp_dy_ema = ema_alpha * comp_dy + (1 - ema_alpha) * comp_dy_ema
+
+            # convert to pixel arrow and clamp length
+            dx_pix = comp_dx_ema * flow_scale
+            dy_pix = comp_dy_ema * flow_scale
+            mag = np.hypot(dx_pix, dy_pix)
+            if mag > max_arrow_length:
+                scale = max_arrow_length / mag
+                dx_pix *= scale; dy_pix *= scale
+
+            # draw stable arrow if magnitude significant
+            if mag > 1.0:
+                end_pt = (int(px + dx_pix), int(py + dy_pix))
+                cv2.arrowedLine(frame, (px, py), end_pt, (255, 0, 0), 3, tipLength=0.5)
+
+        # ----- Visualization -----
+        # overlay centering feedback
+        display_centering_feedback(frame, initial_center, frame_width, frame_height)
+        
+        # overlay compensated flow feedback
+        # comp_x and comp_dy should be last computed compensated flow deltas
+        display_flow_feedback(frame, comp_dx_ema, comp_dy_ema, last_known_size)
+
+        # draw detection ROI, fixed bbox & center
+        cv2.rectangle(frame, (rx1, ry1), (rx2, ry2), (255, 0, 0), 1)
+        cv2.rectangle(frame, (fx1, fy1), (fx2, fy2), (0, 255, 0), 2)
         cv2.circle(frame, (px, py), 5, (0, 0, 255), -1)
 
-        closeness = get_centering_score(initial_center, frame_center, max_dist)
-        vis_metric = get_visibility_score(last_known_size, frame_area)
+        # combined summary at bottom-right
+        display_combined_feedback(frame,
+                          initial_center,
+                          frame_width,
+                          frame_height,
+                          comp_dx_ema,
+                          comp_dy_ema,
+                          alpha=0.1)
+        # diagnostics and recenter arrow
+        
 
-        if frame_count % 6 == 0:
-            flow_coh = prev_flow_coh
-            kp_ratio = prev_kp_ratio
-        else:
-            if prev_crop_flow.size == 0 or crop.size == 0 or prev_crop_flow.shape[:2] != crop.shape[:2]:
-                flow_coh = prev_flow_coh
-            else:
-                flow_coh = get_optical_flow_coherence(prev_crop_flow, crop)
-            crop_resized = cv2.resize(crop, (template_crop_kp.shape[1], template_crop_kp.shape[0]))
-            kp_ratio = get_keypoint_match_ratio(template_crop_kp, crop_resized)
-            if prev_flow_coh - flow_coh > drop_threshold:
-                cv2.imwrite(os.path.join(drop_folder, f"drop_flow_{frame_count}.png"), frame)
-            if prev_kp_ratio - kp_ratio > drop_threshold:
-                cv2.imwrite(os.path.join(drop_folder, f"drop_kp_{frame_count}.png"), frame)
-            prev_flow_coh = flow_coh
-            prev_kp_ratio = kp_ratio
-            prev_crop_flow = crop.copy()
 
-        if not occluded:
-            pred_pt = np.array([px, py])
-            path_cons = get_path_consistency(pred_pt, initial_center, max_dist)
-            if path_cons is not None:
-                sum_path += path_cons
-                valid_path_count += 1
-        else:
-            path_cons = None
 
-        sum_flow += flow_coh
-        sum_kp += kp_ratio
-
+        #this part needs to be refined.
+        """
         draw_diagnostics(
-            frame, closeness, best_conf, vis_metric, occluded,
-            flow_coh, kp_ratio, path_cons
+
+            frame,
+            get_centering_score(initial_center, frame_center, max_dist),
+            best_conf,
+            get_visibility_score(last_known_size, frame_area),
+            occluded,
+            sum_flow/proc_count if proc_count else 1.0,
+            sum_kp/proc_count if proc_count else 1.0,
+            get_path_consistency(np.array([px, py]), initial_center, max_dist) if not occluded else None
         )
-        draw_recenter_arrow(frame, initial_center, frame_center, arrow_length, closeness)
+        """
+
+
+
+        draw_recenter_arrow(frame, initial_center, frame_center, arrow_length,
+                            get_centering_score(initial_center, frame_center, max_dist))
+
         cv2.imshow("tracking", frame)
         if cv2.waitKey(1) & 0xFF == ord('q'):
             break
 
-        elapsed = time.time() - start
-        total_time += elapsed
+        total_time += (time.time() - start)
         proc_count += 1
 
+    # final stats
     avg_time = total_time / proc_count if proc_count else 0
-    est_fps = 1.0 / avg_time if avg_time else 0
     print(f"Processed {proc_count} frames in {total_time:.2f} s")
-    print(f"Average time/frame: {avg_time*1000:.1f} ms | Estimated FPS: {est_fps:.1f}")
+    print(f"Average time/frame: {avg_time*1000:.1f} ms | Estimated FPS: {1.0/avg_time:.1f}")
     print(f"Template was updated {template_update_count} times during tracking.")
-
-    avg_flow = sum_flow / proc_count if proc_count else 0
-    avg_kp = sum_kp / proc_count if proc_count else 0
-    avg_path = sum_path / valid_path_count if valid_path_count else 0
-    print(f"Average Flow Coherence: {avg_flow*100:.1f}%")
-    print(f"Average Keypoint Ratio: {avg_kp*100:.1f}%")
-    print(f"Average Path Consistency: {avg_path*100:.1f}%")
+    print(f"Average Path Consistency(problematic): {sum_path/1+valid_path_count*100:.1f}%")
 
     cap.release()
     cv2.destroyAllWindows()
