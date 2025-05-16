@@ -23,6 +23,8 @@ class YOLODetector:
         return None, None, None, 0.0
 
     def detect_in_roi(self, crop, x1_offset, y1_offset, target_class_id, original_center):
+        if crop is None or crop.size == 0 or crop.shape[0] == 0 or crop.shape[1] == 0:
+            return False, None, 0.0
         results = self.model(crop, conf=0.4, iou=0.4, max_det=3, verbose=False)
         best_score = float('inf')
         closest = None

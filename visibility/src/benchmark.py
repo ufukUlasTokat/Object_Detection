@@ -67,10 +67,13 @@ def evaluate_all():
 
         preds = load_boxes(pred_path)
         gts = load_boxes(gt_path)
-
+        while len(preds) < len(gts):
+            preds.append([0,0,0,0])  # or [np.nan]*4 for clarity
         if len(preds) != len(gts):
             print(f"[WARN] Frame count mismatch in {seq}: pred={len(preds)} gt={len(gts)}")
             continue
+
+        
 
         iou = np.mean([compute_iou(p, g) for p, g in zip(preds, gts)])
         prec = compute_precision(preds, gts)
@@ -78,6 +81,8 @@ def evaluate_all():
         iou_scores.append(iou)
         precision_scores.append(prec)
         valid_sequences.append(seq)
+    iou_scores = [s for s in iou_scores if not np.isnan(s)]
+    precision_scores = [s for s in precision_scores if not np.isnan(s)]
 
     print("\n=== Benchmark Summary ===")
     for seq, iou, prec in zip(valid_sequences, iou_scores, precision_scores):

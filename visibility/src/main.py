@@ -59,7 +59,7 @@ def main():
     prev_gray_bg = None
     bg_flow_buffer = deque(maxlen=5)
 
-    # Initial ROI selection and YOLO detection
+    # Initial ROI selection and YOLO detection, for benchmarking we automatically select
     #roi = select_target_roi(first_frame)
 
 
@@ -168,7 +168,7 @@ def main():
         # ----- Kalman predict and build fixed bbox -----
         skip_yolo = (frame_count % 6 != 0)
         state = tracker.predict(skip_yolo=skip_yolo)
-        px, py = int(state[0]), int(state[1])
+        px, py = int(state[0].item()), int(state[1].item())
         bw, bh = last_known_size
         bx1 = max(0, px - bw // 2); by1 = max(0, py - bh // 2)
         bx2 = min(frame_width, bx1 + bw); by2 = min(frame_height, by1 + bh)
@@ -212,10 +212,15 @@ def main():
         fx1, fy1, fx2, fy2 = fixed_bbox
 
 
-        bbox_file.write(f"{fx1},{fy1},{fx2},{fy2}\n")
+        bbox_file.write(f"{fx1},{fy1},{fx2 - fx1},{fy2 - fy1}\n")
 
 
         fixed_crop = frame[fy1:fy2, fx1:fx2]
+
+        if fixed_crop is None or fixed_crop.size == 0:
+            print(f"[WARNING] Empty crop at frame {frame_count}, skipping frame.")
+            continue  # or use 'prev_gray_obj = None' and skip flow computation
+
         gray_obj = cv2.cvtColor(fixed_crop, cv2.COLOR_BGR2GRAY)
         if prev_gray_obj is not None and prev_gray_obj.shape == gray_obj.shape and occlusion_counter <= max_occlusion_for_flow:
             flow_obj = cv2.calcOpticalFlowFarneback(
@@ -249,7 +254,8 @@ def main():
             # draw stable arrow if magnitude significant
             if mag > 1.0:
                 end_pt = (int(px + dx_pix), int(py + dy_pix))
-                cv2.arrowedLine(frame, (px, py), end_pt, (255, 0, 0), 3, tipLength=0.5)
+                cv2.arrowedLine(frame, (int(px), int(py)), (int(end_pt[0]), int(end_pt[1])), (255, 0, 0), 3, tipLength=0.5)
+
 
         # ----- Visualization -----
         # overlay centering feedback
