@@ -47,5 +47,8 @@ class TrajectoryMLPredictor:
             features.extend(vel[i])
             features.extend(acc[i])
         X_input = np.array([features])
-        pred = self.model.predict(X_input)[0]
+        try:
+            pred = self.model.predict(X_input)[0]
+        except:
+            return None
         return np.array([[pred[0]], [pred[1]], [0], [0]], dtype=np.float32)

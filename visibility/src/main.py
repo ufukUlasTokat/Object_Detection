@@ -18,7 +18,8 @@ import numpy as np
 import os
 import time
 from collections import deque
-
+import glob
+import argparse
 
 def select_target_roi(frame):
     print("Select object by drawing bounding box and pressing ENTER or SPACE.")
@@ -28,33 +29,62 @@ def select_target_roi(frame):
 
 
 def main():
-    video_path = "../data/deneme2.mp4"
-    drop_folder = "../output/drops"
-    os.makedirs(drop_folder, exist_ok=True)
-    drop_threshold = 0.9
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--seq", type=str, required=True, help="Sequence name (e.g., bike1)")
+    args = parser.parse_args()
+    seq_name = args.seq
+    
+    frame_dir = f"../data/UAV123_10fps/data_seq/UAV123_10fps/{seq_name}"
+    image_paths = sorted(glob.glob(os.path.join(frame_dir, "*.jpg")))
 
-    cap = cv2.VideoCapture(video_path)
-    if not cap.isOpened():
-        print("Error: Video not found.")
+    if not image_paths:
+        print("No image frames found!")
         return
 
-    frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    fps = int(cap.get(cv2.CAP_PROP_FPS))
+    drop_folder = f"../output/drops/{seq_name}"
+    os.makedirs(drop_folder, exist_ok=True)
 
-    # downsampling parameters for ego-motion compensation
+    bbox_log_path = os.path.join(drop_folder, "bounding_boxes.txt")
+    bbox_file = open(bbox_log_path, "w")
+    drop_threshold = 0.9
+
+    # Load first frame for manual ROI
+    first_frame = cv2.imread(image_paths[0])
+    frame_height, frame_width = first_frame.shape[:2]
+    fps = 10  # UAV123_10fps is fixed
+
+
     small_w = 320
     small_h = int(frame_height * small_w / frame_width)
     prev_gray_bg = None
     bg_flow_buffer = deque(maxlen=5)
 
-    ret, first_frame = cap.read()
-    if not ret:
-        print("Error: Could not read first frame.")
-        return
-
     # Initial ROI selection and YOLO detection
-    roi = select_target_roi(first_frame)
+    #roi = select_target_roi(first_frame)
+
+
+    # Load ground truth bbox from annotation
+    anno_path = f"../data/UAV123_10fps/anno/UAV123_10fps/{seq_name}.txt"
+    with open(anno_path, 'r') as f:
+        x, y, w, h = map(int, map(float, f.readline().strip().split(",")))
+
+    # Expand box size by a factor (e.g. 1.5×)
+    scale_factor = 1.5
+    cx, cy = x + w // 2, y + h // 2
+    nw, nh = int(w * scale_factor), int(h * scale_factor)
+    nx = max(0, cx - nw // 2)
+    ny = max(0, cy - nh // 2)
+
+    # Clip width and height to not exceed frame
+    nw = min(nw, frame_width - nx)
+    nh = min(nh, frame_height - ny)
+
+    roi = [nx, ny, nw, nh]
+
+
+
+
+
     x, y, w, h = roi
     initial_center = np.array([x + w // 2, y + h // 2])
     search_box_size = max(w, h) * 1.3
@@ -111,10 +141,12 @@ def main():
     flow_scale = 20  # scale factor before clamping
     max_occlusion_for_flow = 2  # skip flow if deeply occluded
 
-    while True:
-        ret, frame = cap.read()
-        if not ret:
+    for frame_path in image_paths[1:]:  # Skip first frame (already used for ROI)
+        frame = cv2.imread(frame_path)
+        if frame is None:
             break
+
+    
 
         start = time.time()
         frame_count += 1
@@ -167,13 +199,22 @@ def main():
                 if best_conf >= template_update_conf:
                     template_crop_kp = frame[by1:by2, bx1:bx2].copy()
                     template_update_count += 1
+                fixed_bbox = (bx1_det, by1_det, bx2_det, by2_det)
             else:
                 occluded = True; occlusion_counter += 1; obj_center = np.array([px, py])
             tracker.correct(obj_center, used_yolo=not occluded)
         initial_center = obj_center.copy()
 
+
+
+
         # ----- Object Farneback flow on fixed bbox -----
         fx1, fy1, fx2, fy2 = fixed_bbox
+
+
+        bbox_file.write(f"{fx1},{fy1},{fx2},{fy2}\n")
+
+
         fixed_crop = frame[fy1:fy2, fx1:fx2]
         gray_obj = cv2.cvtColor(fixed_crop, cv2.COLOR_BGR2GRAY)
         if prev_gray_obj is not None and prev_gray_obj.shape == gray_obj.shape and occlusion_counter <= max_occlusion_for_flow:
@@ -270,8 +311,9 @@ def main():
     print(f"Template was updated {template_update_count} times during tracking.")
     print(f"Average Path Consistency(problematic): {sum_path/1+valid_path_count*100:.1f}%")
 
-    cap.release()
+    
     cv2.destroyAllWindows()
+    bbox_file.close()
 
 
 if __name__ == "__main__":
