@@ -177,7 +177,7 @@ def main():
         # ----- Detection ROI logic (unchanged) -----
         if skip_yolo:
             obj_center = initial_center.copy()
-            found = False
+            no_detect = False
         else:
             if occlusion_counter > expansion_delay_frames:
                 search_box_size = min(max_search_box_size, search_box_size * expansion_factor)
@@ -202,7 +202,7 @@ def main():
                 obj_center = np.array([px, py])
 
         # ONLY train when we actually ran YOLO
-        used_yolo = (not skip_yolo) and found
+        used_yolo = (not skip_yolo) and no_detect
         tracker.correct(obj_center, used_yolo=used_yolo)
         initial_center = obj_center.copy()
 
