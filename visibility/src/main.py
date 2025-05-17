@@ -83,7 +83,7 @@ def main():
         x, y, w, h = map(int, map(float, f.readline().strip().split(",")))
 
     # Expand box size by a factor (e.g. 1.5×)
-    scale_factor = 1.5
+    scale_factor = 2.0
     cx, cy = x + w // 2, y + h // 2
     nw, nh = int(w * scale_factor), int(h * scale_factor)
     nx = max(0, cx - nw // 2)
@@ -107,8 +107,24 @@ def main():
     detected_class_id, detected_class_name, initial_box, best_conf = \
         detector.initial_detect(first_frame, roi, fps)
     if detected_class_id is None:
-        print("Error: Object not detected.")
+        print("Error: Object not detected in the first frame. Saving debug frame and logging failure.")
+        
+        # Save the failed frame
+        fail_frame_path = os.path.join(drop_folder, "detection_failed.jpg")
+        cv2.imwrite(fail_frame_path, first_frame)
+        
+        # Log the sequence name
+        fail_log_path = "../output/failed_sequences.txt"
+        with open(fail_log_path, "a") as fail_log:
+            fail_log.write(f"{seq_name}\n")
+        
+        # Display for brief inspection
+        cv2.imshow("Initial Frame - Detection Failed", first_frame)
+        cv2.waitKey(1000)  # wait 1 second
+        cv2.destroyWindow("Initial Frame - Detection Failed")
         return
+
+
 
     print(f"Selected object: {detected_class_name}")
     tracker = KalmanTracker(initial_center, use_ml=True, window_size=5)
@@ -155,7 +171,7 @@ def main():
     flow_scale = 20  # scale factor before clamping
     max_occlusion_for_flow = 2  # skip flow if deeply occluded
 
-    for frame_path in image_paths[1:]:  # Skip first frame (already used for ROI)
+    for frame_path in image_paths:  # Skip first frame (already used for ROI)
         frame = cv2.imread(frame_path)
         if frame is None:
             break
