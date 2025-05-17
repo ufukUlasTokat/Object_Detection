@@ -1,13 +1,8 @@
 from detector import YOLODetector
 from kalman_tracker import KalmanTracker
 from utils import (
-    draw_diagnostics,
     get_centering_score,
-    get_visibility_score,
     draw_recenter_arrow,
-    get_optical_flow_coherence,
-    get_keypoint_match_ratio,
-    get_path_consistency,
     display_centering_feedback,
     display_flow_feedback,
     display_combined_feedback
@@ -28,10 +23,9 @@ def select_target_roi(frame):
 
 
 def main():
-    video_path = "../data/deneme2.mp4"
+    video_path = "../data/deneme3.mp4"
     drop_folder = "../output/drops"
     os.makedirs(drop_folder, exist_ok=True)
-    drop_threshold = 0.9
 
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
@@ -75,8 +69,7 @@ def main():
     last_known_size = (x2_i - x1_i, y2_i - y1_i)
     prev_fixed_crop = first_frame[y1_i:y2_i, x1_i:x2_i].copy()
     template_crop_kp = prev_fixed_crop.copy()
-    template_update_conf = 1
-    template_update_count = 0
+
 
     # Diagnostics and state variables
     frame_center = np.array([frame_width / 2, frame_height / 2])
@@ -134,7 +127,7 @@ def main():
         prev_gray_bg = gray_bg
 
         # ----- Kalman predict and build fixed bbox -----
-        skip_yolo = (frame_count % 6 != 0)
+        skip_yolo = (frame_count % 3 != 0)
         state = tracker.predict(skip_yolo=skip_yolo)
         px, py = int(state[0]), int(state[1])
         bw, bh = last_known_size
@@ -143,9 +136,9 @@ def main():
         fixed_bbox = (bx1, by1, bx2, by2)
 
         # ----- Detection ROI logic (unchanged) -----
-        if not frame_count % 6 == 0:
+        if skip_yolo:
             obj_center = initial_center.copy()
-            occluded = False
+            found = False
         else:
             if occlusion_counter > expansion_delay_frames:
                 search_box_size = min(max_search_box_size, search_box_size * expansion_factor)
@@ -163,10 +156,12 @@ def main():
             if found:
                 bx1_det, by1_det, bx2_det, by2_det, obj_center = closest_box
                 last_known_size = (bx2_det - bx1_det, by2_det - by1_det)
-                
+                occlusion_counter = 0
             else:
-                occluded = True; occlusion_counter += 1; obj_center = np.array([px, py])
-            tracker.correct(obj_center, used_yolo=not occluded)
+                occlusion_counter += 1; obj_center = np.array([px, py])
+        
+        used_yolo = (not skip_yolo) and found
+        tracker.correct(obj_center, used_yolo=used_yolo)
         initial_center = obj_center.copy()
 
         # ----- Object Farneback flow on fixed bbox -----
@@ -230,26 +225,6 @@ def main():
                           alpha=0.1)
         # diagnostics and recenter arrow
         
-
-
-
-        #this part needs to be refined.
-        """
-        draw_diagnostics(
-
-            frame,
-            get_centering_score(initial_center, frame_center, max_dist),
-            best_conf,
-            get_visibility_score(last_known_size, frame_area),
-            occluded,
-            sum_flow/proc_count if proc_count else 1.0,
-            sum_kp/proc_count if proc_count else 1.0,
-            get_path_consistency(np.array([px, py]), initial_center, max_dist) if not occluded else None
-        )
-        """
-
-
-
         draw_recenter_arrow(frame, initial_center, frame_center, arrow_length,
                             get_centering_score(initial_center, frame_center, max_dist))
 
@@ -264,8 +239,7 @@ def main():
     avg_time = total_time / proc_count if proc_count else 0
     print(f"Processed {proc_count} frames in {total_time:.2f} s")
     print(f"Average time/frame: {avg_time*1000:.1f} ms | Estimated FPS: {1.0/avg_time:.1f}")
-    print(f"Template was updated {template_update_count} times during tracking.")
-    print(f"Average Path Consistency(problematic): {sum_path/1+valid_path_count*100:.1f}%")
+
 
     cap.release()
     cv2.destroyAllWindows()
