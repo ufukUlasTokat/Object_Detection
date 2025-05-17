@@ -42,8 +42,17 @@ def run_tracking_on_sequence(seq):
     print(result.stdout)
     if result.returncode != 0:
         print(f"[ERROR] {seq}: {result.stderr}")
+import re
 
-def evaluate_all():
+def load_sequence_names_from_config(filepath):
+    with open(filepath, 'r') as f:
+        content = f.read()
+
+    # Find all sequence names using regex on 'name','<seq_name>'
+    names = re.findall(r"'name','([^']+)'", content)
+    return names
+
+"""def evaluate_all():
     seq_root = Path("../data/UAV123_10fps/data_seq/UAV123_10fps")
     gt_root = Path("../data/UAV123_10fps/anno/UAV123_10fps")
     output_root = Path("../output/drops")
@@ -106,7 +115,95 @@ def evaluate_all():
     plt.xlabel("IoU Threshold")
     plt.ylabel("Success Rate")
     plt.grid()
-    plt.show()
+    plt.show()"""
+def run_tracking_on_sequence(seq_info):
+    print(f"\n[TRACKING] {seq_info['name']}")
+    cmd = [
+        "python", "main.py",
+        "--seq", seq_info['name'],
+        "--start", str(seq_info['start_frame']),
+        "--end", str(seq_info['end_frame']),
+        "--init_rect", ",".join(map(str, seq_info['init_rect']))
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    print(result.stdout)
+    if result.returncode != 0:
+        print(f"[ERROR] {seq_info['name']}: {result.stderr}")
+import re
+
+def load_config_seqs(filepath):
+    with open(filepath, 'r') as f:
+        content = f.read()
+
+    # Match all structs using regex (name, path, startFrame, endFrame, etc.)
+    pattern = re.compile(
+        r"\('name','([^']+)',.*?'startFrame',(\d+),'endFrame',(\d+),.*?'ext','([^']+)',.*?'init_rect',\[(.*?)\]\)",
+        re.DOTALL
+    )
+
+    seqs = []
+    for match in pattern.finditer(content):
+        name = match.group(1)
+        start_frame = int(match.group(2))
+        end_frame = int(match.group(3))
+        ext = match.group(4)
+        init_rect_str = match.group(5)
+        init_rect = list(map(float, init_rect_str.split(','))) if init_rect_str.strip() else [0, 0, 0, 0]
+
+        seqs.append({
+            'name': name,
+            'start_frame': start_frame,
+            'end_frame': end_frame,
+            'ext': ext,
+            'init_rect': init_rect
+        })
+
+    return seqs
+
+def evaluate_all():
+    config_path = "../data/UAV123_10fps/configSeqs.m"  # Adjust as needed
+    sequence_names = load_sequence_names_from_config(config_path)
+
+    gt_root = Path("../data/UAV123_10fps/anno/UAV123_10fps")
+    output_root = Path("../output/drops")
+
+    iou_scores = []
+    precision_scores = []
+    valid_sequences = []
+    seqs_info = load_config_seqs("../data/UAV123_10fps/configSeqs.m")  # Adjust path
+
+    for seq_info in seqs_info:
+        run_tracking_on_sequence(seq_info)
+        seq = seq_info['name']
+        # Then continue with evaluation as before...
+
+    #for seq in sequence_names:
+        #run_tracking_on_sequence(seq)
+
+        gt_path = gt_root / f"{seq}.txt"
+        pred_path = output_root / seq / "bounding_boxes.txt"
+
+        if not pred_path.exists() or not gt_path.exists():
+            print(f"[SKIPPED] Missing files for {seq}")
+            continue
+
+        preds = load_boxes(pred_path)
+        gts = load_boxes(gt_path)
+        if len(preds) != len(gts):
+            print(f"[WARN] Frame count mismatch in {seq}")
+            continue
+
+        iou = np.mean([compute_iou(p, g) for p, g in zip(preds, gts)])
+        prec = compute_precision(preds, gts)
+
+        iou_scores.append(iou)
+        precision_scores.append(prec)
+        valid_sequences.append(seq)
+
+    print("\n=== Benchmark Summary ===")
+    for seq, iou, prec in zip(valid_sequences, iou_scores, precision_scores):
+        print(f"{seq}: IoU={iou:.3f}, Precision@20px={prec*100:.1f}%")
+
 
 if __name__ == "__main__":
     evaluate_all()

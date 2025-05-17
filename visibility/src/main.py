@@ -31,11 +31,25 @@ def select_target_roi(frame):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--seq", type=str, required=True, help="Sequence name (e.g., bike1)")
+
+    parser.add_argument("--start", type=int, default=1, help="Start frame index")
+    parser.add_argument("--end", type=int, default=-1, help="End frame index (-1 means till end)")
+    parser.add_argument("--init_rect", type=str, default="", help="Initial bounding box x,y,w,h")
+
+
     args = parser.parse_args()
     seq_name = args.seq
-    
-    frame_dir = f"../data/UAV123_10fps/data_seq/UAV123_10fps/{seq_name}"
-    image_paths = sorted(glob.glob(os.path.join(frame_dir, "*.jpg")))
+    # Extract base sequence name for video frames
+    base_seq_name = args.seq.split('_')[0]
+    frame_dir = f"../data/UAV123_10fps/data_seq/UAV123_10fps/{base_seq_name}"
+
+    start_frame = args.start
+    end_frame = args.end
+    all_images = sorted(glob.glob(os.path.join(frame_dir, "*.jpg")))
+
+    # Slice based on user-supplied frame indices
+    image_paths = all_images[args.start - 1: args.end if args.end > 0 else None]
+
 
     if not image_paths:
         print("No image frames found!")
