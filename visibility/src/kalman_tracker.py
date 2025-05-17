@@ -28,7 +28,11 @@ class KalmanTracker:
         if self.frame_count < 10 or not self.use_ml or not skip_yolo:
             return self.kalman.predict()
 
-        ml_prediction = self.ml_model.predict_next()
+        try:
+            ml_prediction = self.ml_model.predict_next()
+        except Exception as a:
+            ml_prediction = None
+
         if ml_prediction is not None:
             self.kalman.statePre = ml_prediction
             return ml_prediction

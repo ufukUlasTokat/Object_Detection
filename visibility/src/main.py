@@ -175,9 +175,9 @@ def main():
         fixed_bbox = (bx1, by1, bx2, by2)
 
         # ----- Detection ROI logic (unchanged) -----
-        if frame_count % 6 == 0:
+        if skip_yolo:
             obj_center = initial_center.copy()
-            occluded = False
+            found = False
         else:
             if occlusion_counter > expansion_delay_frames:
                 search_box_size = min(max_search_box_size, search_box_size * expansion_factor)
@@ -189,20 +189,21 @@ def main():
             rx2 = int(min(frame_width, cx + half)); ry2 = int(min(frame_height, cy + half))
             detection_crop = frame[ry1:ry2, rx1:rx2]
 
-            found, closest_box, new_conf = detector.detect_in_roi(
+            found, closest_box = detector.detect_in_roi(
                 detection_crop, rx1, ry1, detected_class_id, initial_center
             )
             if found:
                 bx1_det, by1_det, bx2_det, by2_det, obj_center = closest_box
                 last_known_size = (bx2_det - bx1_det, by2_det - by1_det)
-                best_conf = new_conf; occluded = False; occlusion_counter = 0
-                if best_conf >= template_update_conf:
-                    template_crop_kp = frame[by1:by2, bx1:bx2].copy()
-                    template_update_count += 1
                 fixed_bbox = (bx1_det, by1_det, bx2_det, by2_det)
+                occlusion_counter = 0
             else:
-                occluded = True; occlusion_counter += 1; obj_center = np.array([px, py])
-            tracker.correct(obj_center, used_yolo=not occluded)
+                occlusion_counter += 1; 
+                obj_center = np.array([px, py])
+
+        # ONLY train when we actually ran YOLO
+        used_yolo = (not skip_yolo) and found
+        tracker.correct(obj_center, used_yolo=used_yolo)
         initial_center = obj_center.copy()
 
 
@@ -279,25 +280,6 @@ def main():
                           comp_dy_ema,
                           alpha=0.1)
         # diagnostics and recenter arrow
-        
-
-
-
-        #this part needs to be refined.
-        """
-        draw_diagnostics(
-
-            frame,
-            get_centering_score(initial_center, frame_center, max_dist),
-            best_conf,
-            get_visibility_score(last_known_size, frame_area),
-            occluded,
-            sum_flow/proc_count if proc_count else 1.0,
-            sum_kp/proc_count if proc_count else 1.0,
-            get_path_consistency(np.array([px, py]), initial_center, max_dist) if not occluded else None
-        )
-        """
-
 
 
         draw_recenter_arrow(frame, initial_center, frame_center, arrow_length,
