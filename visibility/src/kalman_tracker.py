@@ -25,7 +25,7 @@ class KalmanTracker:
         self.frame_count += 1
 
         # İlk 10 frame boyunca ML kullanma
-        if self.frame_count < 10 or not self.use_ml or not skip_yolo:
+        if self.frame_count < 35 or not self.use_ml or not skip_yolo:
             return self.kalman.predict()
 
         ml_prediction = self.ml_model.predict_next()

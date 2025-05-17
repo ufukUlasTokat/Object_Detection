@@ -143,7 +143,7 @@ def main():
         fixed_bbox = (bx1, by1, bx2, by2)
 
         # ----- Detection ROI logic (unchanged) -----
-        if frame_count % 6 == 0:
+        if not frame_count % 6 == 0:
             obj_center = initial_center.copy()
             occluded = False
         else:
@@ -163,10 +163,7 @@ def main():
             if found:
                 bx1_det, by1_det, bx2_det, by2_det, obj_center = closest_box
                 last_known_size = (bx2_det - bx1_det, by2_det - by1_det)
-                best_conf = new_conf; occluded = False; occlusion_counter = 0
-                if best_conf >= template_update_conf:
-                    template_crop_kp = frame[by1:by2, bx1:bx2].copy()
-                    template_update_count += 1
+                
             else:
                 occluded = True; occlusion_counter += 1; obj_center = np.array([px, py])
             tracker.correct(obj_center, used_yolo=not occluded)
