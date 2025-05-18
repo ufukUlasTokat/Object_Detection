@@ -67,9 +67,6 @@ def main():
     # Set up fixed-size bounding box from first detection
     x1_i, y1_i, x2_i, y2_i = initial_box
     last_known_size = (x2_i - x1_i, y2_i - y1_i)
-    prev_fixed_crop = first_frame[y1_i:y2_i, x1_i:x2_i].copy()
-    template_crop_kp = prev_fixed_crop.copy()
-
 
     # Diagnostics and state variables
     frame_center = np.array([frame_width / 2, frame_height / 2])
@@ -85,10 +82,7 @@ def main():
 
     total_time = 0.0
     proc_count = 0
-    sum_flow = 0.0
-    sum_kp = 0.0
-    sum_path = 0.0
-    valid_path_count = 0
+
 
     # Variables to store ROI coords for drawing
     rx1 = ry1 = rx2 = ry2 = 0
@@ -127,7 +121,7 @@ def main():
         prev_gray_bg = gray_bg
 
         # ----- Kalman predict and build fixed bbox -----
-        skip_yolo = (frame_count % 3 != 0)
+        skip_yolo = (frame_count % 4 !=0)
         state = tracker.predict(skip_yolo=skip_yolo)
         px, py = int(state[0]), int(state[1])
         bw, bh = last_known_size
@@ -135,7 +129,7 @@ def main():
         bx2 = min(frame_width, bx1 + bw); by2 = min(frame_height, by1 + bh)
         fixed_bbox = (bx1, by1, bx2, by2)
 
-        # ----- Detection ROI logic (unchanged) -----
+        # ----- Detection ROI logic  -----
         if skip_yolo:
             obj_center = initial_center.copy()
             found = False
@@ -183,6 +177,7 @@ def main():
         if obj_flow_buffer and bg_flow_buffer:
             avg_dx_obj, avg_dy_obj = np.mean(np.array(obj_flow_buffer), axis=0)
             avg_dx_bg, avg_dy_bg = np.mean(np.array(bg_flow_buffer), axis=0)
+
             comp_dx = avg_dx_obj - avg_dx_bg
             comp_dy = avg_dy_obj - avg_dy_bg
             # exponential moving average
