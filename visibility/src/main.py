@@ -95,7 +95,7 @@ def main():
     comp_dx_ema, comp_dy_ema = 0.0, 0.0
     ema_alpha = 0.1  # smoothing factor
     max_arrow_length = min(frame_width, frame_height) * 0.5
-    flow_scale = 20  # scale factor before clamping
+    flow_scale = 10  # scale factor before clamping
     max_occlusion_for_flow = 2  # skip flow if deeply occluded
 
     while True:
@@ -121,7 +121,7 @@ def main():
         prev_gray_bg = gray_bg
 
         # ----- Kalman predict and build fixed bbox -----
-        skip_yolo = (frame_count % 4 !=0)
+        skip_yolo = (frame_count % 3 !=0)
         state = tracker.predict(skip_yolo=skip_yolo)
         px, py = int(state[0]), int(state[1])
         bw, bh = last_known_size
@@ -195,7 +195,7 @@ def main():
             # draw stable arrow if magnitude significant
             if mag > 1.0:
                 end_pt = (int(px + dx_pix), int(py + dy_pix))
-                cv2.arrowedLine(frame, (px, py), end_pt, (255, 0, 0), 3, tipLength=0.5)
+                cv2.arrowedLine(frame, (px, py), end_pt, (255, 255, 0), 2, tipLength=0.3)
 
         # ----- Visualization -----
         # overlay centering feedback

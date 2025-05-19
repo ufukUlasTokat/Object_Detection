@@ -57,7 +57,7 @@ def display_flow_feedback(frame, comp_x, comp_y, last_known_size):
     cv2.putText(frame, txt2, (x0, y0+30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200,200,0), 2)
 
 
-def display_combined_feedback(frame, initial_center, frame_w, frame_h, comp_x, comp_y, alpha=0.7):
+def display_combined_feedback(frame, initial_center, frame_w, frame_h, comp_x, comp_y, alpha=0.4):
     """
     Overlay a combined summary at the bottom-right:
       - single arrow = alpha*centering + (1-alpha)*flow
@@ -94,19 +94,19 @@ def display_combined_feedback(frame, initial_center, frame_w, frame_h, comp_x, c
     ex = int(cx + e_comb[0] * length)
     ey = int(cy + e_comb[1] * length)
     # background box
-    cv2.rectangle(frame, (sx-5, sy-5), (sx+inset_size+5, sy+inset_size+5), (50,50,50), -1)
+    cv2.rectangle(frame, (sx-5, sy-5), (sx+inset_size+5, sy+inset_size+5), (20,20,20), -1)
     # thin arrow from center
-    cv2.arrowedLine(frame, (cx, cy), (ex, ey), (0,200,200), 1, tipLength=0.3)
+    cv2.arrowedLine(frame, (cx, cy), (ex, ey), (0,125,255), 1, tipLength=0.3)
 
     # Textual summary
     txt = (f"Cx:{ecx:+.2f} Cy:{ecy:+.2f} | "
            f"Fx:{nfx:+.2f} Fy:{nfy:+.2f} | "
            f"Comb:{comb_str:.2f}")
-    size = cv2.getTextSize(txt, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)[0]
+    size = cv2.getTextSize(txt, cv2.FONT_HERSHEY_SIMPLEX, 0.8, 2)[0]
     tx = frame_w - size[0] - 10
     ty = frame_h - inset_size - 30
     cv2.putText(frame, txt, (tx, ty),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,200,200), 1)
+                cv2.FONT_HERSHEY_SIMPLEX, 0.8, (120,0,255), 2)
 
 
 
